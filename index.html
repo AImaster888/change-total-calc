@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工程契約變更金額計算器 — 契約追加減金額彙算與驗證</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#f7f8fa;color:#1e293b}
+.tbl{width:100%;border-collapse:collapse;border:2px solid #334155}
+.tbl th{background:#1e3a5f;color:#fff;font-weight:600;font-size:12.5px;padding:8px 10px;border:1px solid #475569;white-space:nowrap}
+.tbl td{padding:6px 8px;border:1px solid #d1d5db;font-size:13px;vertical-align:middle}
+.tbl tr:nth-child(even){background:#f8fafc}
+.tbl tr:hover{background:#eff6ff}
+.inp{width:100%;border:1.5px solid #cbd5e1;border-radius:4px;padding:4px 7px;font-size:13px;text-align:right;font-family:inherit;outline:none;background:#fff}
+.inp:focus{border-color:#2563eb;box-shadow:0 0 0 2px #bfdbfe}
+.inp-r{width:100%;border:1.5px solid #a78bfa;border-radius:4px;padding:4px 7px;font-size:13px;text-align:right;font-family:inherit;outline:none;background:#faf5ff}
+.inp-r:focus{border-color:#7c3aed;box-shadow:0 0 0 2px #ddd6fe}
+.btn{padding:5px 14px;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity 0.15s}
+.btn:hover{opacity:0.85}
+.calc-cell{background:#f0f9ff;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.final-row td{background:#fef9c3!important;font-weight:700!important;font-size:14px!important}
+.diff-pos{color:#16a34a;font-weight:600}
+.diff-neg{color:#dc2626;font-weight:600}
+.warn-text{color:#dc2626;font-size:11px;font-weight:600;margin-top:2px}
+.edited-badge{font-size:10px;background:#ede9fe;color:#6d28d9;padding:1px 5px;border-radius:3px;margin-left:4px;white-space:nowrap}
+.name-inp{width:100%;border:1.5px solid #cbd5e1;border-radius:4px;padding:4px 7px;font-size:13px;text-align:left;font-family:inherit;outline:none}
+.name-inp:focus{border-color:#2563eb;box-shadow:0 0 0 2px #bfdbfe}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+const fmt = (n) => {
+  if (n === "" || n === null || n === undefined || isNaN(n)) return "";
+  return Number(n).toLocaleString("zh-TW", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+};
+const p = (s) => {
+  if (s === "" || s === null || s === undefined) return 0;
+  const n = parseFloat(String(s).replace(/,/g, ""));
+  return isNaN(n) ? 0 : n;
+};
+const floorTo = (n, decimals) => {
+  const factor = Math.pow(10, decimals);
+  return Math.floor(n * factor) / factor;
+};
+
+function calcNewItemTax(lv, overrides = {}) {
+  if (lv.B1 === 0 || lv.A4 === 0) return null;
+  const ratioPct = floorTo((lv.A4 / lv.B1) * 100, 2);
+  const ratio = ratioPct / 100;
+  const formulaShare012 = lv.A5 * ratio;
+  const share012 = overrides.share012 !== undefined ? p(overrides.share012) : formulaShare012;
+  const share013 = overrides.share013 !== undefined ? p(overrides.share013) : 0;
+  const share014 = overrides.share014 !== undefined ? p(overrides.share014) : 0;
+  const subtotal = lv.A4 + share012 + share013 + share014;
+  const tax0B = subtotal * 0.05;
+  const totalWithTax = subtotal + tax0B;
+  const totalFinal = Math.floor(totalWithTax);
+  return { ratioPct, ratio, share012, share013, share014, formulaShare012, subtotal, tax0B, totalWithTax, totalFinal };
+}
+
+const ROWS = [
+  { key: "name", label: "案件名稱", isName: true },
+  { key: "A1", label: "A1. 原契約金額", input: true },
+  { key: "A2", label: "A2. 原契約工項追加金額", input: true },
+  { key: "A3", label: "A3. 原契約工項減少金額", input: true },
+  { key: "A4", label: "A4. 新增項目金額", input: true },
+  { key: "B1", label: "B1. 變更項目總和 (A2+A3+A4)", calc: true },
+  { key: "A5pct", label: "A5. 承商利潤率 (%)", input: true, pct: true, leftOnly: true },
+  { key: "A5", label: "A5. 012承商利潤 (金額)", calc: true, validate: "profit" },
+  { key: "A6", label: "A6. 013職安衛費用", input: true },
+  { key: "A7", label: "A7. 014材料檢試驗費用", input: true },
+  { key: "B2", label: "B2. 變更總金額 (B1+A5+A6+A7)", calc: true },
+  { key: "B3", label: "B3. 營業稅 (B2×5%)", calc: true, validate: "tax" },
+  { key: "B4", label: "B4. 變更金額 (B2+B3)", calc: true },
+  { key: "B5", label: "B5. 最終金額 (A1+B4)", calc: true, final: true },
+  { key: "A8", label: "A8. 其他機關自辦費用", input: true },
+];
+
+const INPUT_KEYS = ["A1","A2","A3","A4","A5pct","A6","A7","A8"];
+const EXAMPLE = { name:"二水", A1:"34243306", A2:"1216143.07", A3:"-980378.92", A4:"871587.9", A5pct:"10", A6:"-5019.28", A7:"22147.04", A8:"22701" };
+
+function calcLeft(inp) {
+  const v = {};
+  for (const k of INPUT_KEYS) v[k] = p(inp[k]);
+  v.name = inp.name || "";
+  v.B1 = v.A2 + v.A3 + v.A4;
+  v.A5 = v.B1 * (v.A5pct / 100);
+  v.B2 = v.B1 + v.A5 + v.A6 + v.A7;
+  v.B3 = v.B2 * 0.05;
+  v.B4 = v.B2 + v.B3;
+  v.B5 = v.A1 + v.B4;
+  return v;
+}
+
+function calcRight(lv, ov) {
+  const g = (k) => ov[k] !== undefined ? p(ov[k]) : lv[k];
+  const v = {};
+  v.name = lv.name;
+  v.A1 = g("A1"); v.A2 = g("A2"); v.A3 = g("A3"); v.A4 = g("A4");
+  v.B1 = v.A2 + v.A3 + v.A4;
+  v.A5 = ov.A5 !== undefined ? p(ov.A5) : lv.A5;
+  v.A6 = g("A6"); v.A7 = g("A7");
+  v.B2 = v.B1 + v.A5 + v.A6 + v.A7;
+  v.B3 = ov.B3 !== undefined ? p(ov.B3) : v.B2 * 0.05;
+  v.B4 = v.B2 + v.B3;
+  v.B5 = v.A1 + v.B4;
+  v.A8 = g("A8");
+  v.A5pct = lv.A5pct;
+  return v;
+}
+
+function getWarnings(rv) {
+  const w = {};
+  const tol = 0.001;
+  const profitLimit = rv.B1 * 0.10;
+  const taxLimit = rv.B2 * 0.05;
+  if (rv.B1 > 0 && rv.A5 > profitLimit + tol) {
+    w.A5 = `追加時利潤超過上限 ${fmt(profitLimit)}`;
+  } else if (rv.B1 < 0 && rv.A5 > profitLimit + tol) {
+    w.A5 = `追減時利潤扣除不足，應 ≤ ${fmt(profitLimit)}`;
+  }
+  if (rv.B2 > 0 && rv.B3 > taxLimit + tol) {
+    w.B3 = `追加時稅金超過上限 ${fmt(taxLimit)}`;
+  } else if (rv.B2 < 0 && rv.B3 > taxLimit + tol) {
+    w.B3 = `追減時稅金扣除不足，應 ≤ ${fmt(taxLimit)}`;
+  }
+  if (Math.abs(rv.B1) > tol) {
+    const signItems = [
+      { key: "A5", label: "012承商利潤" },
+      { key: "A6", label: "013職安衛" },
+      { key: "A7", label: "014材料檢試驗" },
+    ];
+    for (const item of signItems) {
+      const val = rv[item.key];
+      if (Math.abs(val) < tol) continue;
+      if (rv.B1 > 0 && val < 0) {
+        w[item.key] = w[item.key] ? w[item.key] + `；追加時${item.label}不應為負值` : `追加時${item.label}不應為負值`;
+      } else if (rv.B1 < 0 && val > 0) {
+        w[item.key] = w[item.key] ? w[item.key] + `；追減時${item.label}不應為正值` : `追減時${item.label}不應為正值`;
+      }
+    }
+  }
+  return w;
+}
+
+function App() {
+  const [inp, setInp] = useState({ name:"", A1:"", A2:"", A3:"", A4:"", A5pct:"", A6:"", A7:"", A8:"" });
+  const [rov, setRov] = useState({});
+  const [niOv, setNiOv] = useState({});
+  const [hist, setHist] = useState([]);
+
+  const lv = useMemo(() => calcLeft(inp), [inp]);
+  const rv = useMemo(() => calcRight(lv, rov), [lv, rov]);
+  const warns = useMemo(() => getWarnings(rv), [rv]);
+  const newItem = useMemo(() => calcNewItemTax(lv, niOv), [lv, niOv]);
+
+  const setI = (k, v) => setInp(prev => ({ ...prev, [k]: v }));
+  const setR = (k, v) => setRov(prev => ({ ...prev, [k]: v }));
+  const setNi = (k, v) => setNiOv(prev => ({ ...prev, [k]: v }));
+  const isNiEdited = (k) => niOv[k] !== undefined;
+
+  const loadEx = () => { setInp({ ...EXAMPLE }); setRov({}); setNiOv({}); };
+  const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
+  const resetR = () => { setRov({}); setNiOv({}); };
+  const save = () => {
+    if (!inp.name) return;
+    setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5 }, ...prev]);
+  };
+
+  const isEdited = (k) => rov[k] !== undefined;
+  const getDiff = (k) => {
+    if (k === "name" || k === "A5pct") return null;
+    const d = (rv[k] ?? 0) - (lv[k] ?? 0);
+    return Math.abs(d) < 0.001 ? null : d;
+  };
+  const rightEditable = (row) => {
+    if (row.isName || row.leftOnly) return false;
+    if (row.input) return true;
+    if (row.key === "A5" || row.key === "B3") return true;
+    return false;
+  };
+  const getRightDisplayVal = (k, row) => {
+    if (isEdited(k)) return rov[k];
+    if (row.input) return inp[k] ?? "";
+    return lv[k];
+  };
+
+  return (
+    <div style={{ maxWidth: 1150, margin: "0 auto", padding: "16px 8px" }}>
+      <h2 style={{ textAlign: "center", margin: "0 0 4px", fontSize: 19, fontWeight: 700, letterSpacing: 1 }}>
+        工程契約變更金額計算器
+      </h2>
+      <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
+        契約追加減金額彙算與驗證
+      </p>
+
+      <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
+        <b>驗證規則：</b><br/>
+        ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×10%、營業稅 ≤ B2×5%（不能多給）<br/>
+        ▸ 追減時（B1&lt;0）：012承商利潤 ≥ B1×10%、營業稅 ≥ B2×5%（可以多扣）<br/>
+        ▸ 012/013/014 正負方向應與 B1 一致（追加應為正、追減應為負）<br/>
+        ▸ 右欄「調整欄」可手動修改數值，系統即時重算並驗證
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <button className="btn" style={{ background: "#2563eb", color: "#fff" }} onClick={loadEx}>載入範例（二水）</button>
+        <button className="btn" style={{ background: "#6b7280", color: "#fff" }} onClick={clearAll}>清除全部</button>
+        <button className="btn" style={{ background: "#7c3aed", color: "#fff" }} onClick={resetR}>右欄還原</button>
+        <button className="btn" style={{ background: "#16a34a", color: "#fff" }} onClick={save}>儲存紀錄</button>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th style={{ width: "28%", textAlign: "left" }}>項目</th>
+              <th style={{ width: "20%" }}>初算值（公式）</th>
+              <th style={{ width: "22%" }}>調整值（手動）</th>
+              <th style={{ width: "14%" }}>差額</th>
+              <th style={{ width: "10%" }}>驗證</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ROWS.map((row) => {
+              const k = row.key;
+              const d = getDiff(k);
+              const w = warns[k];
+              const re = rightEditable(row);
+              const isF = row.final;
+              return (
+                <tr key={k} className={isF ? "final-row" : ""}>
+                  <td style={{ fontWeight: row.calc ? 600 : 400, color: row.calc ? "#1e3a5f" : "#334155" }}>
+                    {row.label}
+                  </td>
+                  <td className={row.calc ? "calc-cell" : ""} style={{ textAlign: "right" }}>
+                    {row.isName ? (
+                      <input className="name-inp" value={inp.name} onChange={e => setI("name", e.target.value)} placeholder="輸入案件名稱" />
+                    ) : row.input ? (
+                      <input className="inp" type="number" step="any" value={inp[k] ?? ""} onChange={e => setI(k, e.target.value)} placeholder={row.pct ? "%" : "0"} />
+                    ) : (
+                      <span>{fmt(lv[k])}</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right", background: re ? (isEdited(k) ? "#faf5ff" : "#fefce8") : (row.calc ? "#f0f9ff" : "#f9fafb") }}>
+                    {row.isName ? (
+                      <span style={{ color: "#64748b" }}>{rv.name || "—"}</span>
+                    ) : row.leftOnly ? (
+                      <span style={{ color: "#64748b" }}>{lv[k]}%</span>
+                    ) : re ? (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <input className="inp-r" type="number" step="any"
+                            value={getRightDisplayVal(k, row)}
+                            onChange={e => setR(k, e.target.value)}
+                            placeholder={String(lv[k] || 0)}
+                          />
+                          {isEdited(k) && <span className="edited-badge">已改</span>}
+                        </div>
+                        {w && <div className="warn-text">⚠ {w}</div>}
+                        {!w && warns[k] && (k === "A6" || k === "A7") && <div className="warn-text">⚠ {warns[k]}</div>}
+                      </div>
+                    ) : (
+                      <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                        {fmt(rv[k])}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right" }} className={d ? (d > 0 ? "diff-pos" : "diff-neg") : ""}>
+                    {d ? ((d > 0 ? "+" : "") + fmt(d)) : ""}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    {row.validate === "profit" && (
+                      <>
+                        {w ? <span style={{ color: "#dc2626", fontWeight: 700, fontSize: 16 }}>✗</span> : <span style={{ color: "#16a34a", fontWeight: 700, fontSize: 16 }}>✓</span>}
+                        {!w && rv.B1 !== 0 && <div style={{ fontSize: 10, color: "#64748b" }}>{((rv.A5 / rv.B1) * 100).toFixed(2)}%</div>}
+                      </>
+                    )}
+                    {row.validate === "tax" && (
+                      <>
+                        {w ? <span style={{ color: "#dc2626", fontWeight: 700, fontSize: 16 }}>✗</span> : <span style={{ color: "#16a34a", fontWeight: 700, fontSize: 16 }}>✓</span>}
+                        {!w && rv.B2 !== 0 && <div style={{ fontSize: 10, color: "#64748b" }}>{((rv.B3 / rv.B2) * 100).toFixed(2)}%</div>}
+                      </>
+                    )}
+                    {(k === "A6" || k === "A7") && warns[k] && <span style={{ color: "#dc2626", fontWeight: 700, fontSize: 16 }}>✗</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Summary */}
+      <div style={{
+        marginTop: 12, padding: "10px 16px", borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8,
+        background: Object.keys(warns).length > 0 ? "#fef2f2" : "#f0fdf4",
+        border: `1.5px solid ${Object.keys(warns).length > 0 ? "#fca5a5" : "#86efac"}`,
+        fontSize: 13
+      }}>
+        <div>
+          <b>驗證：</b>
+          {Object.keys(warns).length === 0 ? (
+            <span style={{ color: "#16a34a", fontWeight: 600 }}>全部通過 ✓</span>
+          ) : (
+            Object.values(warns).map((w, i) => <span key={i} style={{ color: "#dc2626", fontWeight: 600 }}>⚠ {w}{"　"}</span>)
+          )}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>
+          調整後 B5：<span style={{ color: "#92400e" }}>{fmt(rv.B5)}</span>
+          {getDiff("B5") && (
+            <span style={{ fontSize: 12, marginLeft: 8 }} className={getDiff("B5") > 0 ? "diff-pos" : "diff-neg"}>
+              ({getDiff("B5") > 0 ? "+" : ""}{fmt(getDiff("B5"))})
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* New Item Tax */}
+      {newItem && (
+        <div style={{ marginTop: 16 }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, color: "#1e3a5f" }}>新增項目含稅計算</h3>
+          <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, padding: "8px 14px", marginBottom: 10, fontSize: 12, lineHeight: 1.7, color: "#166534" }}>
+            佔比 = A4 ÷ B1，無條件捨去至小數2位 ｜ 012按佔比自動算，013/014請手動填入 ｜ 最終含稅金額無條件捨去至整數
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: "30%", textAlign: "left" }}>項目</th>
+                <th style={{ width: "25%" }}>計算式</th>
+                <th style={{ width: "20%" }}>公式值</th>
+                <th style={{ width: "20%" }}>調整值</th>
+                <th style={{ width: "5%" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>新增項目佔比</td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#64748b" }}>A4({fmt(lv.A4)}) ÷ B1({fmt(lv.B1)})</td>
+                <td style={{ textAlign: "right", fontWeight: 700, color: "#2563eb" }} colSpan={2}>{newItem.ratioPct}%</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>012 承商利潤分攤</td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#64748b" }}>{fmt(lv.A5)} × {newItem.ratioPct}%</td>
+                <td style={{ textAlign: "right" }}>{fmt(newItem.formulaShare012)}</td>
+                <td style={{ textAlign: "right", background: isNiEdited("share012") ? "#faf5ff" : "#fefce8" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <input className="inp-r" type="number" step="any"
+                      value={isNiEdited("share012") ? niOv.share012 : newItem.formulaShare012}
+                      onChange={e => setNi("share012", e.target.value)} style={{ fontSize: 12 }} />
+                    {isNiEdited("share012") && <span className="edited-badge">已改</span>}
+                  </div>
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  {isNiEdited("share012") && Math.abs(newItem.share012 - newItem.formulaShare012) > 0.001 && (
+                    <span className={newItem.share012 - newItem.formulaShare012 > 0 ? "diff-pos" : "diff-neg"} style={{ fontSize: 11 }}>
+                      {(newItem.share012 - newItem.formulaShare012) > 0 ? "+" : ""}{fmt(newItem.share012 - newItem.formulaShare012)}
+                    </span>
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>013 職安衛分攤 <span style={{ fontSize: 11, color: "#dc2626" }}>（請手動填入）</span></td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#94a3b8" }}>需另行計算</td>
+                <td style={{ textAlign: "right", color: "#94a3b8" }}>—</td>
+                <td style={{ textAlign: "right", background: "#fff7ed" }}>
+                  <input className="inp-r" type="number" step="any" value={niOv.share013 ?? ""}
+                    onChange={e => setNi("share013", e.target.value)} placeholder="請填入金額"
+                    style={{ fontSize: 12, borderColor: "#f97316" }} />
+                </td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>014 材料檢試驗分攤 <span style={{ fontSize: 11, color: "#dc2626" }}>（請手動填入）</span></td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#94a3b8" }}>需另行計算</td>
+                <td style={{ textAlign: "right", color: "#94a3b8" }}>—</td>
+                <td style={{ textAlign: "right", background: "#fff7ed" }}>
+                  <input className="inp-r" type="number" step="any" value={niOv.share014 ?? ""}
+                    onChange={e => setNi("share014", e.target.value)} placeholder="請填入金額"
+                    style={{ fontSize: 12, borderColor: "#f97316" }} />
+                </td>
+                <td></td>
+              </tr>
+              <tr style={{ background: "#f0f9ff" }}>
+                <td style={{ fontWeight: 600 }}>小計（A4 + 分攤合計）</td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#64748b" }}>{fmt(lv.A4)} + {fmt(newItem.share012)} + ({fmt(newItem.share013)}) + {fmt(newItem.share014)}</td>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600 }}>{fmt(newItem.subtotal)}</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>0B 營業稅（小計 × 5%）</td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#64748b" }}>{fmt(newItem.subtotal)} × 5%</td>
+                <td colSpan={2} style={{ textAlign: "right" }}>{fmt(newItem.tax0B)}</td>
+                <td></td>
+              </tr>
+              <tr style={{ background: "#fef9c3" }}>
+                <td style={{ fontWeight: 700, fontSize: 14 }}>新增項目含稅金額</td>
+                <td style={{ textAlign: "right", fontSize: 12, color: "#64748b" }}>{fmt(newItem.totalWithTax)} → 捨去至整數</td>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 700, fontSize: 15, color: "#92400e" }}>{fmt(newItem.totalFinal)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* History */}
+      {hist.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <h4 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700 }}>儲存紀錄</h4>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left" }}>案件</th>
+                <th>時間</th>
+                <th>初算 B5</th>
+                <th>調整 B5</th>
+                <th>差額</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hist.map(h => {
+                const hd = h.b5r - h.b5l;
+                return (
+                  <tr key={h.id}>
+                    <td style={{ fontWeight: 600 }}>{h.name}</td>
+                    <td style={{ fontSize: 12, color: "#64748b" }}>{h.date}</td>
+                    <td style={{ textAlign: "right" }}>{fmt(h.b5l)}</td>
+                    <td style={{ textAlign: "right" }}>{fmt(h.b5r)}</td>
+                    <td style={{ textAlign: "right" }} className={hd > 0 ? "diff-pos" : hd < 0 ? "diff-neg" : ""}>
+                      {Math.abs(hd) > 0.001 ? ((hd > 0 ? "+" : "") + fmt(hd)) : ""}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <button className="btn" style={{ background: "#2563eb", color: "#fff" }}
+                        onClick={() => { setInp(h.inp); setRov(h.rov); }}>載入</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
