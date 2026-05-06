@@ -192,7 +192,7 @@ function App() {
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
     if (!inp.name) return;
-    setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5 }, ...prev]);
+    setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5, lv: { ...lv }, rv: { ...rv } }, ...prev]);
   };
 
   const clearHistory = () => {
@@ -203,10 +203,30 @@ function App() {
 
   const exportCSV = () => {
     if (hist.length === 0) return alert("目前沒有紀錄可匯出");
-    let csvContent = "案件名稱,儲存時間,初算最終金額(B5),調整後最終金額(B5),差額\n";
+    
+    // 建立 CSV 標題列，包含所有欄位的初算與調整值
+    const cols = ROWS.filter(r => r.key !== "name");
+    let headerRow = ["案件名稱", "儲存時間"];
+    cols.forEach(r => {
+      headerRow.push(`${r.key}_初算`);
+      if (r.key !== "A5pct") headerRow.push(`${r.key}_調整`);
+    });
+    headerRow.push("差額(B5)");
+    
+    let csvContent = headerRow.join(",") + "\n";
+    
     hist.forEach(h => {
-      const hd = h.b5r - h.b5l;
-      csvContent += `"${h.name}","${h.date}",${h.b5l},${h.b5r},${hd}\n`;
+      // 若舊紀錄沒有 lv/rv，透過歷史 inp/rov 重新計算
+      const h_lv = h.lv || calcLeft(h.inp);
+      const h_rv = h.rv || calcRight(h_lv, h.rov);
+      
+      let rowData = [ `"${h.name}"`, `"${h.date}"` ];
+      cols.forEach(r => {
+        rowData.push(h_lv[r.key] ?? "");
+        if (r.key !== "A5pct") rowData.push(h_rv[r.key] ?? "");
+      });
+      rowData.push(h.b5r - h.b5l);
+      csvContent += rowData.join(",") + "\n";
     });
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
