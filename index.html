@@ -71,7 +71,11 @@ const ROWS = [
   { key: "A1", label: "A1. 原契約金額", input: true },
   { key: "A2", label: "A2. 原契約工項追加金額", input: true },
   { key: "A3", label: "A3. 原契約工項減少金額", input: true },
-  { key: "A4", label: "A4. 新增項目金額", input: true },
+  // ▼▼▼ 修改位置 1: 拆分 A4 為 A4a, A4b，並將 A4 設為自動計算 ▼▼▼
+  { key: "A4a", label: "A4a. 新增項目（不議價）", input: true },
+  { key: "A4b", label: "A4b. 新增項目（議價）", input: true },
+  { key: "A4", label: "A4. 新增項目總額（自動計算）", calc: true },
+  // ▲▲▲ 修改位置 1 結束 ▲▲▲
   { key: "B1", label: "B1. 變更項目總和 (A2+A3+A4)", calc: true },
   { key: "A5pct", label: "A5. 承商利潤率 (%)", input: true, pct: true, leftOnly: true },
   { key: "A5", label: "A5. 012承商利潤 (金額)", calc: true, validate: "profit" },
@@ -84,13 +88,23 @@ const ROWS = [
   { key: "A8", label: "A8. 其他機關自辦費用", input: true },
 ];
 
-const INPUT_KEYS = ["A1","A2","A3","A4","A5pct","A6","A7","A8"];
-const EXAMPLE = { name:"二水", A1:"34243306", A2:"1216143.07", A3:"-980378.92", A4:"871587.9", A5pct:"10", A6:"-5019.28", A7:"22147.04", A8:"22701" };
+// ▼▼▼ 修改位置 2: INPUT_KEYS 移除 A4，加入 A4a, A4b ▼▼▼
+const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];
+// ▲▲▲ 修改位置 2 結束 ▲▲▲
+
+// ▼▼▼ 修改位置 3: 範例資料同步拆分 A4 為 A4a, A4b ▼▼▼
+const EXAMPLE = { name:"二水", A1:"34243306", A2:"1216143.07", A3:"-980378.92", A4a:"871587.9", A4b:"0", A5pct:"10", A6:"-5019.28", A7:"22147.04", A8:"22701" };
+// ▲▲▲ 修改位置 3 結束 ▲▲▲
 
 function calcLeft(inp) {
   const v = {};
   for (const k of INPUT_KEYS) v[k] = p(inp[k]);
   v.name = inp.name || "";
+  
+  // ▼▼▼ 修改位置 4: 左欄計算中，A4 改由 A4a + A4b 動態加總 ▼▼▼
+  v.A4 = v.A4a + v.A4b;
+  // ▲▲▲ 修改位置 4 結束 ▲▲▲
+  
   v.B1 = v.A2 + v.A3 + v.A4;
   v.A5 = v.B1 * (v.A5pct / 100);
   v.B2 = v.B1 + v.A5 + v.A6 + v.A7;
@@ -104,7 +118,14 @@ function calcRight(lv, ov) {
   const g = (k) => ov[k] !== undefined ? p(ov[k]) : lv[k];
   const v = {};
   v.name = lv.name;
-  v.A1 = g("A1"); v.A2 = g("A2"); v.A3 = g("A3"); v.A4 = g("A4");
+  v.A1 = g("A1"); v.A2 = g("A2"); v.A3 = g("A3"); 
+  
+  // ▼▼▼ 修改位置 5: 右欄計算加入 A4a, A4b，並自動計算 A4 ▼▼▼
+  v.A4a = g("A4a"); 
+  v.A4b = g("A4b");
+  v.A4 = v.A4a + v.A4b;
+  // ▲▲▲ 修改位置 5 結束 ▲▲▲
+  
   v.B1 = v.A2 + v.A3 + v.A4;
   v.A5 = ov.A5 !== undefined ? p(ov.A5) : lv.A5;
   v.A6 = g("A6"); v.A7 = g("A7");
@@ -122,16 +143,19 @@ function getWarnings(rv) {
   const tol = 0.001;
   const profitLimit = rv.B1 * 0.10;
   const taxLimit = rv.B2 * 0.05;
+  
+  // ▼▼▼ 修改位置 6: 移除追減時 (B1 < 0) 利潤多扣的警示 ▼▼▼
   if (rv.B1 > 0 && rv.A5 > profitLimit + tol) {
     w.A5 = `追加時利潤超過上限 ${fmt(profitLimit)}`;
-  } else if (rv.B1 < 0 && rv.A5 > profitLimit + tol) {
-    w.A5 = `追減時利潤扣除不足，應 ≤ ${fmt(profitLimit)}`;
   }
+  // ▲▲▲ 修改位置 6 結束 ▲▲▲
+  
+  // ▼▼▼ 修改位置 7: 移除追減時 (B2 < 0) 稅金多扣的警示 ▼▼▼
   if (rv.B2 > 0 && rv.B3 > taxLimit + tol) {
     w.B3 = `追加時稅金超過上限 ${fmt(taxLimit)}`;
-  } else if (rv.B2 < 0 && rv.B3 > taxLimit + tol) {
-    w.B3 = `追減時稅金扣除不足，應 ≤ ${fmt(taxLimit)}`;
   }
+  // ▲▲▲ 修改位置 7 結束 ▲▲▲
+
   if (Math.abs(rv.B1) > tol) {
     const signItems = [
       { key: "A5", label: "012承商利潤" },
@@ -152,7 +176,10 @@ function getWarnings(rv) {
 }
 
 function App() {
-  const [inp, setInp] = useState({ name:"", A1:"", A2:"", A3:"", A4:"", A5pct:"", A6:"", A7:"", A8:"" });
+  // ▼▼▼ 修改位置 8: 初始 State 將 A4 改為 A4a, A4b ▼▼▼
+  const [inp, setInp] = useState({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" });
+  // ▲▲▲ 修改位置 8 結束 ▲▲▲
+  
   const [rov, setRov] = useState({});
   const [niOv, setNiOv] = useState({});
   const [hist, setHist] = useState([]);
@@ -168,7 +195,11 @@ function App() {
   const isNiEdited = (k) => niOv[k] !== undefined;
 
   const loadEx = () => { setInp({ ...EXAMPLE }); setRov({}); setNiOv({}); };
-  const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
+  
+  // ▼▼▼ 修改位置 9: Clear 功能支援清空 A4a, A4b ▼▼▼
+  const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
+  // ▲▲▲ 修改位置 9 結束 ▲▲▲
+  
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
     if (!inp.name) return;
