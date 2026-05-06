@@ -35,7 +35,7 @@ body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#f7f8
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script type="text/babel">
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 
 const fmt = (n) => {
   if (n === "" || n === null || n === undefined || isNaN(n)) return "";
@@ -71,11 +71,9 @@ const ROWS = [
   { key: "A1", label: "A1. 原契約金額", input: true },
   { key: "A2", label: "A2. 原契約工項追加金額", input: true },
   { key: "A3", label: "A3. 原契約工項減少金額", input: true },
-  // ▼▼▼ 修改位置 1: 拆分 A4 為 A4a, A4b，並將 A4 設為自動計算 ▼▼▼
   { key: "A4a", label: "A4a. 新增項目（不議價）", input: true },
   { key: "A4b", label: "A4b. 新增項目（議價）", input: true },
   { key: "A4", label: "A4. 新增項目總額（自動計算）", calc: true },
-  // ▲▲▲ 修改位置 1 結束 ▲▲▲
   { key: "B1", label: "B1. 變更項目總和 (A2+A3+A4)", calc: true },
   { key: "A5pct", label: "A5. 承商利潤率 (%)", input: true, pct: true, leftOnly: true },
   { key: "A5", label: "A5. 012承商利潤 (金額)", calc: true, validate: "profit" },
@@ -88,22 +86,15 @@ const ROWS = [
   { key: "A8", label: "A8. 其他機關自辦費用", input: true },
 ];
 
-// ▼▼▼ 修改位置 2: INPUT_KEYS 移除 A4，加入 A4a, A4b ▼▼▼
 const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];
-// ▲▲▲ 修改位置 2 結束 ▲▲▲
-
-// ▼▼▼ 修改位置 3: 範例資料同步拆分 A4 為 A4a, A4b ▼▼▼
 const EXAMPLE = { name:"二水", A1:"34243306", A2:"1216143.07", A3:"-980378.92", A4a:"871587.9", A4b:"0", A5pct:"10", A6:"-5019.28", A7:"22147.04", A8:"22701" };
-// ▲▲▲ 修改位置 3 結束 ▲▲▲
 
 function calcLeft(inp) {
   const v = {};
   for (const k of INPUT_KEYS) v[k] = p(inp[k]);
   v.name = inp.name || "";
   
-  // ▼▼▼ 修改位置 4: 左欄計算中，A4 改由 A4a + A4b 動態加總 ▼▼▼
   v.A4 = v.A4a + v.A4b;
-  // ▲▲▲ 修改位置 4 結束 ▲▲▲
   
   v.B1 = v.A2 + v.A3 + v.A4;
   v.A5 = v.B1 * (v.A5pct / 100);
@@ -120,11 +111,9 @@ function calcRight(lv, ov) {
   v.name = lv.name;
   v.A1 = g("A1"); v.A2 = g("A2"); v.A3 = g("A3"); 
   
-  // ▼▼▼ 修改位置 5: 右欄計算加入 A4a, A4b，並自動計算 A4 ▼▼▼
   v.A4a = g("A4a"); 
   v.A4b = g("A4b");
   v.A4 = v.A4a + v.A4b;
-  // ▲▲▲ 修改位置 5 結束 ▲▲▲
   
   v.B1 = v.A2 + v.A3 + v.A4;
   v.A5 = ov.A5 !== undefined ? p(ov.A5) : lv.A5;
@@ -144,17 +133,13 @@ function getWarnings(rv) {
   const profitLimit = rv.B1 * 0.10;
   const taxLimit = rv.B2 * 0.05;
   
-  // ▼▼▼ 修改位置 6: 移除追減時 (B1 < 0) 利潤多扣的警示 ▼▼▼
   if (rv.B1 > 0 && rv.A5 > profitLimit + tol) {
     w.A5 = `追加時利潤超過上限 ${fmt(profitLimit)}`;
   }
-  // ▲▲▲ 修改位置 6 結束 ▲▲▲
   
-  // ▼▼▼ 修改位置 7: 移除追減時 (B2 < 0) 稅金多扣的警示 ▼▼▼
   if (rv.B2 > 0 && rv.B3 > taxLimit + tol) {
     w.B3 = `追加時稅金超過上限 ${fmt(taxLimit)}`;
   }
-  // ▲▲▲ 修改位置 7 結束 ▲▲▲
 
   if (Math.abs(rv.B1) > tol) {
     const signItems = [
@@ -176,18 +161,30 @@ function getWarnings(rv) {
 }
 
 function App() {
-  // ▼▼▼ 修改位置 8: 初始 State 將 A4 改為 A4a, A4b ▼▼▼
   const [inp, setInp] = useState({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" });
-  // ▲▲▲ 修改位置 8 結束 ▲▲▲
-  
   const [rov, setRov] = useState({});
   const [niOv, setNiOv] = useState({});
-  const [hist, setHist] = useState([]);
+  
+  // ▼▼▼ 修改：加入 LocalStorage 讀取 ▼▼▼
+  const [hist, setHist] = useState(() => {
+    try {
+      const saved = localStorage.getItem("calcHistory");
+      if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return [];
+  });
+  // ▲▲▲ 修改結束 ▲▲▲
 
   const lv = useMemo(() => calcLeft(inp), [inp]);
   const rv = useMemo(() => calcRight(lv, rov), [lv, rov]);
   const warns = useMemo(() => getWarnings(rv), [rv]);
   const newItem = useMemo(() => calcNewItemTax(lv, niOv), [lv, niOv]);
+
+  // ▼▼▼ 修改：加入 LocalStorage 儲存機制 ▼▼▼
+  useEffect(() => {
+    localStorage.setItem("calcHistory", JSON.stringify(hist));
+  }, [hist]);
+  // ▲▲▲ 修改結束 ▲▲▲
 
   const setI = (k, v) => setInp(prev => ({ ...prev, [k]: v }));
   const setR = (k, v) => setRov(prev => ({ ...prev, [k]: v }));
@@ -195,16 +192,41 @@ function App() {
   const isNiEdited = (k) => niOv[k] !== undefined;
 
   const loadEx = () => { setInp({ ...EXAMPLE }); setRov({}); setNiOv({}); };
-  
-  // ▼▼▼ 修改位置 9: Clear 功能支援清空 A4a, A4b ▼▼▼
   const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
-  // ▲▲▲ 修改位置 9 結束 ▲▲▲
-  
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
     if (!inp.name) return;
     setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5 }, ...prev]);
   };
+
+  // ▼▼▼ 修改：加入清除紀錄與匯出 CSV 函式 ▼▼▼
+  const clearHistory = () => {
+    if (window.confirm("確定要清空所有儲存紀錄嗎？")) {
+      setHist([]);
+    }
+  };
+
+  const exportCSV = () => {
+    if (hist.length === 0) return alert("目前沒有紀錄可匯出");
+    let csvContent = "案件名稱,儲存時間,初算最終金額(B5),調整後最終金額(B5),差額\n";
+    hist.forEach(h => {
+      const hd = h.b5r - h.b5l;
+      // 避免數字逗號影響 CSV 格式，移除文字中的逗號或直接輸出數值
+      csvContent += `"${h.name}","${h.date}",${h.b5l},${h.b5r},${hd}\n`;
+    });
+    // 加上 BOM \uFEFF 讓 Excel 可以正確讀取 UTF-8 中文
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
+    link.setAttribute("download", `契約變更計算紀錄_${dateStr}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  // ▲▲▲ 修改結束 ▲▲▲
 
   const isEdited = (k) => rov[k] !== undefined;
   const getDiff = (k) => {
@@ -446,7 +468,19 @@ function App() {
       {/* History */}
       {hist.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <h4 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700 }}>儲存紀錄</h4>
+          {/* ▼▼▼ 修改：標題區塊加入匯出及清除按鈕 ▼▼▼ */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>儲存紀錄</h4>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn" style={{ background: "#10b981", color: "#fff", padding: "4px 10px", fontSize: 11 }} onClick={exportCSV}>
+                📥 匯出 CSV (Excel)
+              </button>
+              <button className="btn" style={{ background: "#ef4444", color: "#fff", padding: "4px 10px", fontSize: 11 }} onClick={clearHistory}>
+                🗑️ 清空紀錄
+              </button>
+            </div>
+          </div>
+          {/* ▲▲▲ 修改結束 ▲▲▲ */}
           <table className="tbl">
             <thead>
               <tr>
