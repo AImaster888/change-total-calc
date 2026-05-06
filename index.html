@@ -165,7 +165,6 @@ function App() {
   const [rov, setRov] = useState({});
   const [niOv, setNiOv] = useState({});
   
-  // ▼▼▼ 修改：加入 LocalStorage 讀取 ▼▼▼
   const [hist, setHist] = useState(() => {
     try {
       const saved = localStorage.getItem("calcHistory");
@@ -173,18 +172,15 @@ function App() {
     } catch(e) {}
     return [];
   });
-  // ▲▲▲ 修改結束 ▲▲▲
 
   const lv = useMemo(() => calcLeft(inp), [inp]);
   const rv = useMemo(() => calcRight(lv, rov), [lv, rov]);
   const warns = useMemo(() => getWarnings(rv), [rv]);
   const newItem = useMemo(() => calcNewItemTax(lv, niOv), [lv, niOv]);
 
-  // ▼▼▼ 修改：加入 LocalStorage 儲存機制 ▼▼▼
   useEffect(() => {
     localStorage.setItem("calcHistory", JSON.stringify(hist));
   }, [hist]);
-  // ▲▲▲ 修改結束 ▲▲▲
 
   const setI = (k, v) => setInp(prev => ({ ...prev, [k]: v }));
   const setR = (k, v) => setRov(prev => ({ ...prev, [k]: v }));
@@ -199,7 +195,6 @@ function App() {
     setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5 }, ...prev]);
   };
 
-  // ▼▼▼ 修改：加入清除紀錄與匯出 CSV 函式 ▼▼▼
   const clearHistory = () => {
     if (window.confirm("確定要清空所有儲存紀錄嗎？")) {
       setHist([]);
@@ -211,10 +206,8 @@ function App() {
     let csvContent = "案件名稱,儲存時間,初算最終金額(B5),調整後最終金額(B5),差額\n";
     hist.forEach(h => {
       const hd = h.b5r - h.b5l;
-      // 避免數字逗號影響 CSV 格式，移除文字中的逗號或直接輸出數值
       csvContent += `"${h.name}","${h.date}",${h.b5l},${h.b5r},${hd}\n`;
     });
-    // 加上 BOM \uFEFF 讓 Excel 可以正確讀取 UTF-8 中文
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -226,7 +219,6 @@ function App() {
     link.click();
     document.body.removeChild(link);
   };
-  // ▲▲▲ 修改結束 ▲▲▲
 
   const isEdited = (k) => rov[k] !== undefined;
   const getDiff = (k) => {
@@ -468,7 +460,6 @@ function App() {
       {/* History */}
       {hist.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          {/* ▼▼▼ 修改：標題區塊加入匯出及清除按鈕 ▼▼▼ */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>儲存紀錄</h4>
             <div style={{ display: "flex", gap: 8 }}>
@@ -480,7 +471,6 @@ function App() {
               </button>
             </div>
           </div>
-          {/* ▲▲▲ 修改結束 ▲▲▲ */}
           <table className="tbl">
             <thead>
               <tr>
