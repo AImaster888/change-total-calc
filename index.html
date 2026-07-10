@@ -87,7 +87,7 @@ const ROWS = [
 ];
 
 const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];
-const EXAMPLE = { name:"二水", A1:"34243306", A2:"1216143.07", A3:"-980378.92", A4a:"871587.9", A4b:"0", A5pct:"10", A6:"-5019.28", A7:"22147.04", A8:"22701" };
+const EXAMPLE = { name:"範例工程", A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"10000" };
 
 function calcLeft(inp) {
   const v = {};
@@ -130,7 +130,7 @@ function calcRight(lv, ov) {
 function getWarnings(rv) {
   const w = {};
   const tol = 0.001;
-  const profitLimit = rv.B1 * 0.10;
+  const profitLimit = rv.B1 * (rv.A5pct / 100);
   const taxLimit = rv.B2 * 0.05;
   
   if (rv.B1 > 0 && rv.A5 > profitLimit + tol) {
@@ -192,7 +192,7 @@ function App() {
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
     if (!inp.name) return;
-    setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, b5l: lv.B5, b5r: rv.B5, lv: { ...lv }, rv: { ...rv } }, ...prev]);
+    setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, niOv: { ...niOv }, b5l: lv.B5, b5r: rv.B5, lv: { ...lv }, rv: { ...rv } }, ...prev]);
   };
 
   const clearHistory = () => {
@@ -269,14 +269,14 @@ function App() {
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
         <b>驗證規則：</b><br/>
-        ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×10%、營業稅 ≤ B2×5%（不能多給）<br/>
-        ▸ 追減時（B1&lt;0）：012承商利潤 ≥ B1×10%、營業稅 ≥ B2×5%（可以多扣）<br/>
+        ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×利潤率、營業稅 ≤ B2×5%（不能多給）<br/>
+        ▸ 追減時（B1&lt;0）：僅檢核正負方向，利潤與稅金可多扣、不檢核幅度<br/>
         ▸ 012/013/014 正負方向應與 B1 一致（追加應為正、追減應為負）<br/>
         ▸ 右欄「調整欄」可手動修改數值，系統即時重算並驗證
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-        <button className="btn" style={{ background: "#2563eb", color: "#fff" }} onClick={loadEx}>載入範例（二水）</button>
+        <button className="btn" style={{ background: "#2563eb", color: "#fff" }} onClick={loadEx}>載入範例</button>
         <button className="btn" style={{ background: "#6b7280", color: "#fff" }} onClick={clearAll}>清除全部</button>
         <button className="btn" style={{ background: "#7c3aed", color: "#fff" }} onClick={resetR}>右欄還原</button>
         <button className="btn" style={{ background: "#16a34a", color: "#fff" }} onClick={save}>儲存紀錄</button>
@@ -516,7 +516,7 @@ function App() {
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <button className="btn" style={{ background: "#2563eb", color: "#fff" }}
-                        onClick={() => { setInp(h.inp); setRov(h.rov); }}>載入</button>
+                        onClick={() => { setInp(h.inp); setRov(h.rov); setNiOv(h.niOv || {}); }}>載入</button>
                     </td>
                   </tr>
                 );
