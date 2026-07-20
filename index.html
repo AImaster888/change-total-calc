@@ -44,25 +44,36 @@ const fmt = (n) => {
 const p = (s) => {
   if (s === "" || s === null || s === undefined) return 0;
   const n = parseFloat(String(s).replace(/,/g, ""));
-  return isNaN(n) ? 0 : n;
+  return Number.isFinite(n) ? n : 0;
 };
-const floorTo = (n, decimals) => {
-  const factor = Math.pow(10, decimals);
-  return Math.floor(n * factor) / factor;
+// 計算原則：各項一律無條件捨去至小數 2 位（不做四捨五入）。
+// cut2 以字串取位，不用 Math.floor(n*100)/100 —— 後者會吃 IEEE-754 尾差：
+// (2900/1000000)*100*100 = 28.999999999999996，會把佔比 0.29% 捨成 0.28%、012 分攤 290 變 280。
+// 防線用「有效位數」而非固定小數位：浮點誤差與數值量級成正比（2600 萬的誤差約 1e-8），
+// 固定小數位的防線在大金額會失效——例如 25000000+1400071.47 的浮點值為 ...46999999988，
+// 會被誤捨成 .46。toPrecision(15) 低於雙精度上限，可消雜訊又保留真實差異（0.289999999 仍捨為 0.28）。
+const cut2 = (n) => {
+  if (!Number.isFinite(n)) return n;
+  const a = Math.abs(n);
+  if (a < 0.01) return 0;        // 捨去至 2 位後必為 0
+  if (a >= 1e15) return n;       // 超出雙精度可靠取位範圍（契約金額不會到此量級）
+  const [ip, fp = ""] = a.toPrecision(15).split(".");
+  const v = Number(ip + "." + fp.slice(0, 2));
+  return n < 0 ? -v : v;
 };
 
 function calcNewItemTax(lv, overrides = {}) {
   if (lv.B1 === 0 || lv.A4 === 0) return null;
-  const ratioPct = floorTo((lv.A4 / lv.B1) * 100, 2);
+  const ratioPct = cut2((lv.A4 / lv.B1) * 100);
   const ratio = ratioPct / 100;
-  const formulaShare012 = lv.A5 * ratio;
-  const share012 = overrides.share012 !== undefined ? p(overrides.share012) : formulaShare012;
-  const share013 = overrides.share013 !== undefined ? p(overrides.share013) : 0;
-  const share014 = overrides.share014 !== undefined ? p(overrides.share014) : 0;
-  const subtotal = lv.A4 + share012 + share013 + share014;
-  const tax0B = subtotal * 0.05;
-  const totalWithTax = subtotal + tax0B;
-  const totalFinal = Math.floor(totalWithTax);
+  const formulaShare012 = cut2(lv.A5 * ratio);
+  const share012 = overrides.share012 !== undefined ? cut2(p(overrides.share012)) : formulaShare012;
+  const share013 = overrides.share013 !== undefined ? cut2(p(overrides.share013)) : 0;
+  const share014 = overrides.share014 !== undefined ? cut2(p(overrides.share014)) : 0;
+  const subtotal = cut2(lv.A4 + share012 + share013 + share014);
+  const tax0B = cut2(subtotal * 0.05);
+  const totalWithTax = cut2(subtotal + tax0B);
+  const totalFinal = Math.floor(totalWithTax);   // 含稅金額無條件捨去至整數（維持原規則）
   return { ratioPct, ratio, share012, share013, share014, formulaShare012, subtotal, tax0B, totalWithTax, totalFinal };
 }
 
@@ -94,14 +105,14 @@ function calcLeft(inp) {
   for (const k of INPUT_KEYS) v[k] = p(inp[k]);
   v.name = inp.name || "";
   
-  v.A4 = v.A4a + v.A4b;
-  
-  v.B1 = v.A2 + v.A3 + v.A4;
-  v.A5 = v.B1 * (v.A5pct / 100);
-  v.B2 = v.B1 + v.A5 + v.A6 + v.A7;
-  v.B3 = v.B2 * 0.05;
-  v.B4 = v.B2 + v.B3;
-  v.B5 = v.A1 + v.B4;
+  v.A4 = cut2(v.A4a + v.A4b);
+
+  v.B1 = cut2(v.A2 + v.A3 + v.A4);
+  v.A5 = cut2(v.B1 * (v.A5pct / 100));
+  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7);
+  v.B3 = cut2(v.B2 * 0.05);
+  v.B4 = cut2(v.B2 + v.B3);
+  v.B5 = cut2(v.A1 + v.B4);
   return v;
 }
 
@@ -113,15 +124,15 @@ function calcRight(lv, ov) {
   
   v.A4a = g("A4a"); 
   v.A4b = g("A4b");
-  v.A4 = v.A4a + v.A4b;
-  
-  v.B1 = v.A2 + v.A3 + v.A4;
-  v.A5 = ov.A5 !== undefined ? p(ov.A5) : lv.A5;
+  v.A4 = cut2(v.A4a + v.A4b);
+
+  v.B1 = cut2(v.A2 + v.A3 + v.A4);
+  v.A5 = ov.A5 !== undefined ? cut2(p(ov.A5)) : lv.A5;
   v.A6 = g("A6"); v.A7 = g("A7");
-  v.B2 = v.B1 + v.A5 + v.A6 + v.A7;
-  v.B3 = ov.B3 !== undefined ? p(ov.B3) : v.B2 * 0.05;
-  v.B4 = v.B2 + v.B3;
-  v.B5 = v.A1 + v.B4;
+  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7);
+  v.B3 = ov.B3 !== undefined ? cut2(p(ov.B3)) : cut2(v.B2 * 0.05);
+  v.B4 = cut2(v.B2 + v.B3);
+  v.B5 = cut2(v.A1 + v.B4);
   v.A8 = g("A8");
   v.A5pct = lv.A5pct;
   return v;
@@ -130,14 +141,16 @@ function calcRight(lv, ov) {
 function getWarnings(rv) {
   const w = {};
   const tol = 0.001;
-  const profitLimit = rv.B1 * (rv.A5pct / 100);
-  const taxLimit = rv.B2 * 0.05;
-  
+  const profitLimit = cut2(rv.B1 * (rv.A5pct / 100));
+  const taxLimit = cut2(rv.B2 * 0.05);
+
   if (rv.B1 > 0 && rv.A5 > profitLimit + tol) {
     w.A5 = `追加時利潤超過上限 ${fmt(profitLimit)}`;
   }
-  
-  if (rv.B2 > 0 && rv.B3 > taxLimit + tol) {
+
+  // 檢核以 B1>0（追加）啟動，與上方利潤檢核一致。
+  // 原本用 B2>0：B1=100 但 A6 被覆寫成 -100 使 B2=0 時，違規的 B3 會整段跳過檢核而被放行。
+  if (rv.B1 > 0 && rv.B3 > taxLimit + tol) {
     w.B3 = `追加時稅金超過上限 ${fmt(taxLimit)}`;
   }
 
@@ -191,7 +204,7 @@ function App() {
   const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
-    if (!inp.name) return;
+    if (!inp.name.trim()) return alert("請先填寫「案件名稱」才能儲存紀錄");
     setHist(prev => [{ id: Date.now(), name: inp.name, date: new Date().toLocaleString("zh-TW"), inp: { ...inp }, rov: { ...rov }, niOv: { ...niOv }, b5l: lv.B5, b5r: rv.B5, lv: { ...lv }, rv: { ...rv } }, ...prev]);
   };
 
@@ -201,8 +214,66 @@ function App() {
     }
   };
 
+  // CSV 欄位跳脫：一律加引號並將內部引號加倍，避免金額千分位逗號撐破欄位
+  const q = (v) => `"${String(n4(v) ?? "").replace(/"/g, '""')}"`;
+  // 消除浮點尾差（1333401.4000000001 → 1333401.4），與畫面顯示同為 4 位小數
+  const n4 = (v) => (typeof v === "number" && isFinite(v)) ? Math.round(v * 10000) / 10000 : v;
+  // Excel 開中文 CSV 必須有 UTF-8 BOM（U+FEFF），否則中文亂碼
+  const BOM = String.fromCharCode(0xFEFF);
+  const downloadCSV = (content, filename) => {
+    const blob = new Blob([BOM + content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+  const fileStamp = () => {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+  };
+
+  // 方案 A：匯出目前畫面這張「初算 vs 調整」比對表
+  const exportCurrentCSV = () => {
+    const rows = [];
+    rows.push([q("案件名稱"), q(inp.name || "（未命名）")].join(","));
+    rows.push([q("匯出時間"), q(new Date().toLocaleString("zh-TW"))].join(","));
+    rows.push("");
+    rows.push(["項目", "初算值", "調整值", "差額", "驗證訊息"].map(q).join(","));
+    ROWS.forEach(row => {
+      const k = row.key;
+      if (row.isName) return;
+      if (row.leftOnly) {
+        rows.push([q(row.label), q(lv[k]), q(""), q(""), q("")].join(","));
+        return;
+      }
+      const d = getDiff(k);
+      rows.push([q(row.label), q(lv[k]), q(rv[k]), q(d ?? ""), q(warns[k] ?? "")].join(","));
+    });
+
+    if (newItem) {
+      rows.push("");
+      rows.push([q("新增項目含稅計算"), q(""), q(""), q(""), q("")].join(","));
+      rows.push(["項目", "公式值", "採用值", "", ""].map(q).join(","));
+      rows.push([q("新增項目佔比(%)"), q(newItem.ratioPct), q(newItem.ratioPct), q(""), q("")].join(","));
+      rows.push([q("012 承商利潤分攤"), q(newItem.formulaShare012), q(newItem.share012), q(""), q("")].join(","));
+      rows.push([q("013 職安衛分攤"), q(""), q(newItem.share013), q(""), q("")].join(","));
+      rows.push([q("014 材料檢試驗分攤"), q(""), q(newItem.share014), q(""), q("")].join(","));
+      rows.push([q("小計（A4+分攤合計）"), q(""), q(newItem.subtotal), q(""), q("")].join(","));
+      rows.push([q("0B 營業稅（小計×5%）"), q(""), q(newItem.tax0B), q(""), q("")].join(","));
+      rows.push([q("新增項目含稅金額（捨去至整數）"), q(newItem.totalWithTax), q(newItem.totalFinal), q(""), q("")].join(","));
+    }
+
+    const nameTag = (inp.name || "未命名").replace(/[\\/:*?"<>|]/g, "_");
+    downloadCSV(rows.join("\n"), `契約變更計算表_${nameTag}_${fileStamp()}.csv`);
+  };
+
   const exportCSV = () => {
-    if (hist.length === 0) return alert("目前沒有紀錄可匯出");
+    if (hist.length === 0) return alert("目前沒有紀錄可匯出，請先按「儲存紀錄」");
     
     // 建立 CSV 標題列，包含所有欄位的初算與調整值
     const cols = ROWS.filter(r => r.key !== "name");
@@ -213,31 +284,22 @@ function App() {
     });
     headerRow.push("差額(B5)");
     
-    let csvContent = headerRow.join(",") + "\n";
+    let csvContent = headerRow.map(q).join(",") + "\n";
     
     hist.forEach(h => {
       // 若舊紀錄沒有 lv/rv，透過歷史 inp/rov 重新計算
       const h_lv = h.lv || calcLeft(h.inp);
       const h_rv = h.rv || calcRight(h_lv, h.rov);
       
-      let rowData = [ `"${h.name}"`, `"${h.date}"` ];
+      let rowData = [ h.name, h.date ];
       cols.forEach(r => {
         rowData.push(h_lv[r.key] ?? "");
         if (r.key !== "A5pct") rowData.push(h_rv[r.key] ?? "");
       });
       rowData.push(h.b5r - h.b5l);
-      csvContent += rowData.join(",") + "\n";
+      csvContent += rowData.map(q).join(",") + "\n";
     });
-    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
-    link.setAttribute("download", `契約變更計算紀錄_${dateStr}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV(csvContent, `契約變更計算紀錄_${fileStamp()}.csv`);
   };
 
   const isEdited = (k) => rov[k] !== undefined;
@@ -264,10 +326,11 @@ function App() {
         工程契約變更金額計算器
       </h2>
       <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-        契約追加減金額彙算與驗證
+        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.2.0（2026-07-20）</span>
       </p>
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
+        <b>計算原則：</b>各項計算一律無條件捨去至小數 2 位，不做四捨五入；調整請由 012 承商利潤、0B 營業稅欄位手動修正。<br/>
         <b>驗證規則：</b><br/>
         ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×利潤率、營業稅 ≤ B2×5%（不能多給）<br/>
         ▸ 追減時（B1&lt;0）：僅檢核正負方向，利潤與稅金可多扣、不檢核幅度<br/>
@@ -280,6 +343,7 @@ function App() {
         <button className="btn" style={{ background: "#6b7280", color: "#fff" }} onClick={clearAll}>清除全部</button>
         <button className="btn" style={{ background: "#7c3aed", color: "#fff" }} onClick={resetR}>右欄還原</button>
         <button className="btn" style={{ background: "#16a34a", color: "#fff" }} onClick={save}>儲存紀錄</button>
+        <button className="btn" style={{ background: "#0891b2", color: "#fff" }} onClick={exportCurrentCSV}>📥 匯出目前計算表 (CSV)</button>
       </div>
 
       <div style={{ overflowX: "auto" }}>
