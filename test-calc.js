@@ -4,11 +4,9 @@ const html = fs.readFileSync("D:/320code/change-total-calc/index.html", "utf8");
 const src = html.slice(html.indexOf('<script type="text/babel">') + 26, html.indexOf("function App()"));
 const body = src
   .replace(/const \{ useState[^\n]*\n/, "")
-  .replace(/^const ROWS = \[[\s\S]*?\n\];$/m, "")
-  .replace(/^const INPUT_KEYS[^\n]*$/m, 'const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];')
   .replace(/^const EXAMPLE[^\n]*$/m, "");
-const mod = new Function(body + "\nreturn { p, cut2, calcLeft, calcRight, calcNewItemTax, getWarnings };")();
-const { cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, p } = mod;
+const mod = new Function(body + "\nreturn { p, cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, parseCSV, csvToState, csvToHistory };")();
+const { cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, p, parseCSV, csvToState, csvToHistory } = mod;
 
 let pass = 0, fail = 0;
 const t = (name, actual, expect) => {
@@ -99,6 +97,131 @@ console.log("\n=== 追減（負值）方向 ===");
   const lv = calcLeft({ A1:"1000000", A2:"0", A3:"-50000.559", A4a:"0", A4b:"0", A5pct:"10", A6:"0", A7:"0", A8:"0" });
   t("B1 捨去朝零", lv.B1, -50000.55);
   t("A5 追減為負", lv.A5, -5000.05);
+}
+
+console.log("\n=== CSV 匯入：「匯出目前計算表」還原（fixture 為實際匯出檔內容）===");
+// 這份 fixture 的 A5 與 B3 是手動下修過的，其餘欄位左右相同
+const CUR_CSV = '﻿' + [
+  '"案件名稱","（未命名）"',
+  '"匯出時間","2026/7/27 下午4:13:57"',
+  '',
+  '"項目","初算值","調整值","差額","驗證訊息"',
+  '"A1. 原契約金額","1960000","1960000","",""',
+  '"A2. 原契約工項追加金額","103285.45","103285.45","",""',
+  '"A3. 原契約工項減少金額","-171013.68","-171013.68","",""',
+  '"A4a. 新增項目（不議價）","576399","576399","",""',
+  '"A4b. 新增項目（議價）","0","0","",""',
+  '"A4. 新增項目總額（自動計算）","576399","576399","",""',
+  '"B1. 變更項目總和 (A2+A3+A4)","508670.77","508670.77","",""',
+  '"A5. 承商利潤率 (%)","10","","",""',
+  '"A5. 012承商利潤 (金額)","50867.07","50855.61","-11.46",""',
+  '"A6. 013職安衛費用","0","0","",""',
+  '"A7. 014材料檢試驗費用","5086.62","5086.62","",""',
+  '"B2. 變更總金額 (B1+A5+A6+A7)","564624.46","564613","-11.46",""',
+  '"B3. 營業稅 (B2×5%)","28231.22","28231","-0.22","追加時稅金超過上限 28,230.65"',
+  '"B4. 變更金額 (B2+B3)","592855.68","592844","-11.68",""',
+  '"B5. 最終金額 (A1+B4)","2552855.68","2552844","-11.68",""',
+  '"A8. 其他機關自辦費用","0","0","",""',
+  '',
+  '"新增項目含稅計算","","","",""',
+  '"項目","公式值","採用值","",""',
+  '"新增項目佔比(%)","113.31","113.31","",""',
+  '"012 承商利潤分攤","57637.47","57637.47","",""',
+  '"013 職安衛分攤","","0","",""',
+  '"014 材料檢試驗分攤","","0","",""',
+  '"小計（A4+分攤合計）","","634036.47","",""',
+  '"0B 營業稅（小計×5%）","","31701.82","",""',
+  '"新增項目含稅金額（捨去至整數）","665738.29","665738","",""',
+].join("\r\n");
+{
+  const rows = parseCSV(CUR_CSV);
+  t("驗證訊息內的千分位逗號不撐破欄位", rows.find(r => r[0].startsWith("B3."))[4], "追加時稅金超過上限 28,230.65");
+
+  const st = csvToState(rows);
+  t("辨識為計算表", st !== null, true);
+  t("A1 還原", st.inp.A1, "1960000");
+  t("A3 負值還原", st.inp.A3, "-171013.68");
+  t("A5pct 還原（右欄空白不得誤判）", st.inp.A5pct, "10");
+  t("左右相同的欄位不得標成手動調整", Object.keys(st.rov).sort().join(","), "A5,B3");
+  t("A5 手動調整值", st.rov.A5, "50855.61");
+  t("B3 手動調整值", st.rov.B3, "28231");
+  t("分攤與公式值相同不得標成調整", Object.keys(st.niOv).length, 0);
+
+  // 還原後重算，須與 CSV 上的數字完全一致
+  const lv = calcLeft(st.inp), rv = calcRight(lv, st.rov);
+  t("重算 B1", lv.B1, 508670.77);
+  t("重算 初算 A5", lv.A5, 50867.07);
+  t("重算 初算 B5", lv.B5, 2552855.68);
+  t("重算 調整 B2", rv.B2, 564613);
+  t("重算 調整 B5", rv.B5, 2552844);
+  t("警告一併還原", getWarnings(rv).B3 !== undefined, true);
+  const ni = calcNewItemTax(lv, st.niOv);
+  t("重算 佔比", ni.ratioPct, 113.31);
+  t("重算 含稅金額", ni.totalFinal, 665738);
+}
+
+console.log("\n=== CSV 匯入：分攤覆寫與格式辨識 ===");
+{
+  const st = csvToState(parseCSV([
+    '"項目","初算值","調整值","差額","驗證訊息"',
+    '"A1. 原契約金額","1000","1000","",""',
+    '"A2. 原契約工項追加金額","100","100","",""',
+    '"A4a. 新增項目（不議價）","50","50","",""',
+    '"012 承商利潤分攤","57637.47","57000","",""',
+    '"013 職安衛分攤","","1200","",""',
+    '"014 材料檢試驗分攤","","0","",""',
+  ].join("\n")));
+  t("012 分攤覆寫", st.niOv.share012, "57000");
+  t("013 分攤覆寫", st.niOv.share013, "1200");
+  t("014 為 0 不算覆寫", st.niOv.share014, undefined);
+  t("不相干的 CSV 回傳 null", csvToState(parseCSV('"甲","乙"\n"1","2"')), null);
+  t("計算表不會被誤判為紀錄檔", csvToHistory(parseCSV(CUR_CSV)), null);
+}
+
+console.log("\n=== CSV 匯入：殘檔與偽標頭必須拒絕（codex review 補強）===");
+{
+  // 只命中一兩列的截斷檔：放行會載入一份幾乎全空的資料，覆蓋掉畫面上真正的計算
+  t("只有 1 列命中 → 拒絕", csvToState(parseCSV('"A1. 原契約金額","1960000","1960000","",""')), null);
+  t("只有 2 列命中 → 拒絕", csvToState(parseCSV(
+    '"A1. 原契約金額","1960000","1960000","",""\n"A2. 原契約工項追加金額","100","100","",""')), null);
+  t("3 列命中 → 接受", csvToState(parseCSV(
+    '"A1. 原契約金額","1960000","1960000","",""\n"A2. 原契約工項追加金額","100","100","",""\n"A3. 原契約工項減少金額","0","0","",""'
+  )) !== null, true);
+  t("完整匯出檔仍然接受", csvToState(parseCSV(CUR_CSV)) !== null, true);
+
+  // 光有前兩欄標頭、沒有任何數值欄的寬表：放行會匯進一批空紀錄
+  t("寬表缺 _初算 欄 → 拒絕", csvToHistory(parseCSV('"案件名稱","儲存時間"\n"甲案","2026/7/27"')), null);
+  t("寬表有 _初算 欄 → 接受", csvToHistory(parseCSV(
+    '"案件名稱","儲存時間","A1_初算","A1_調整"\n"甲案","2026/7/27","1000","1000"'
+  )).length, 1);
+}
+
+console.log("\n=== CSV 匯入：引號跳脫的案件名稱 ===");
+{
+  const rows = parseCSV('"案件名稱","甲案 ""A標"" 追加"\n"A1. 原契約金額","1000","1000","",""\n"A2. 原契約工項追加金額","100","100","",""\n"A3. 原契約工項減少金額","0","0","",""');
+  t("欄位內的跳脫雙引號還原", rows[0][1], '甲案 "A標" 追加');
+  t("案件名稱帶雙引號可匯入", csvToState(rows).inp.name, '甲案 "A標" 追加');
+}
+
+console.log("\n=== CSV 匯入：「匯出計算紀錄」寬表還原 ===");
+{
+  const head = ["案件名稱", "儲存時間"];
+  const vals = ["甲案", "2026/7/27 下午4:00:00"];
+  const put = (k, l, r) => { head.push(k + "_初算"); vals.push(l); if (k !== "A5pct") { head.push(k + "_調整"); vals.push(r); } };
+  put("A1","1000000","1000000"); put("A2","100000","100000"); put("A3","0","0");
+  put("A4a","0","0"); put("A4b","0","0"); put("A4","0","0"); put("B1","100000","100000");
+  put("A5pct","10",""); put("A5","10000","9999"); put("A6","0","0"); put("A7","0","0");
+  put("B2","110000","109999"); put("B3","5500","5499"); put("B4","115500","115498");
+  put("B5","1115500","1115498"); put("A8","0","0");
+  const csv = [head, vals].map(r => r.map(v => `"${v}"`).join(",")).join("\n") + "\n";
+
+  const list = csvToHistory(parseCSV(csv));
+  t("辨識為紀錄檔且筆數正確", list.length, 1);
+  t("案件名稱", list[0].name, "甲案");
+  t("儲存時間保留", list[0].date, "2026/7/27 下午4:00:00");
+  t("僅 A5/B3 視為手動調整", Object.keys(list[0].rov).sort().join(","), "A5,B3");
+  t("初算 B5 重算一致", list[0].b5l, 1115500);
+  t("調整 B5 重算一致", list[0].b5r, 1115498);
 }
 
 console.log(`\n合計：${pass} 通過 / ${fail} 失敗`);

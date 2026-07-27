@@ -35,7 +35,7 @@ body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#f7f8
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script type="text/babel">
-const { useState, useMemo, useEffect } = React;
+const { useState, useMemo, useEffect, useRef } = React;
 
 const fmt = (n) => {
   if (n === "" || n === null || n === undefined || isNaN(n)) return "";
@@ -98,6 +98,9 @@ const ROWS = [
 ];
 
 const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];
+// 右欄可手動覆寫的欄位（A5pct 只有左欄，故不在此列）
+const OVERRIDE_KEYS = ["A1","A2","A3","A4a","A4b","A6","A7","A8","A5","B3"];
+const blankInp = () => ({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" });
 const EXAMPLE = { name:"範例工程", A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"10000" };
 
 function calcLeft(inp) {
@@ -173,11 +176,97 @@ function getWarnings(rv) {
   return w;
 }
 
+// RFC4180 解析：欄位一律被引號包住，內部逗號（千分位、驗證訊息）不可當分隔符。
+function parseCSV(text) {
+  const s = String(text).replace(/^﻿/, "");
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQ) {
+      if (c !== '"') { field += c; }
+      else if (s[i + 1] === '"') { field += '"'; i++; }
+      else { inQ = false; }
+    } else if (c === '"') { inQ = true; }
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && s[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else { field += c; }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// 還原一個欄位：左欄進 inp，右欄只有「與左欄不同」時才算手動覆寫——
+// 否則整張表匯入後會全部掛上「已改」標記，看不出實際改了哪幾項。
+function putValue(inp, rov, key, left, right) {
+  left = String(left ?? "").trim();
+  right = String(right ?? "").trim();
+  if (left !== "" && INPUT_KEYS.includes(key)) inp[key] = left;
+  if (right !== "" && OVERRIDE_KEYS.includes(key) && Math.abs(p(right) - p(left)) > 0.001) rov[key] = right;
+}
+
+// 匯入格式一：「匯出目前計算表」——一列一項目，欄為 項目/初算值/調整值/差額/驗證訊息
+function csvToState(rows) {
+  const byLabel = {};
+  ROWS.forEach(r => { if (!r.isName) byLabel[r.label] = r.key; });
+  const inp = blankInp(), rov = {}, niOv = {};
+  let hit = 0;
+  for (const r of rows) {
+    const label = String(r[0] ?? "").trim();
+    const left = r[1], right = r[2];
+    if (label === "案件名稱") {
+      const nm = String(left ?? "").trim();
+      inp.name = nm === "（未命名）" ? "" : nm;
+      continue;
+    }
+    if (byLabel[label] !== undefined) { hit++; putValue(inp, rov, byLabel[label], left, right); continue; }
+    // 新增項目含稅計算區塊：第 2 欄為公式值、第 3 欄為採用值
+    const adopt = String(right ?? "").trim();
+    if (label === "012 承商利潤分攤") {
+      if (adopt !== "" && Math.abs(p(adopt) - p(left)) > 0.001) niOv.share012 = adopt;
+    } else if (label === "013 職安衛分攤") {
+      if (p(adopt) !== 0) niOv.share013 = adopt;
+    } else if (label === "014 材料檢試驗分攤") {
+      if (p(adopt) !== 0) niOv.share014 = adopt;
+    }
+  }
+  // 完整匯出檔有 16 個項目列。門檻設 3 是為了擋掉被截斷或只是欄名碰巧相同的檔案——
+  // 只憑一列命中就放行，會把殘檔當成有效計算表載入一份幾乎全空的資料。
+  return hit < 3 ? null : { inp, rov, niOv };
+}
+
+// 匯入格式二：「匯出計算紀錄」——一列一案，欄名形如 A1_初算 / A1_調整。
+// 該格式未匯出新增項目分攤，故 niOv 一律還原為空。
+function csvToHistory(rows) {
+  const head = (rows[0] || []).map(h => String(h ?? "").trim());
+  if (head[0] !== "案件名稱" || head[1] !== "儲存時間") return null;
+  // 只認前兩欄的話，一個光有標頭沒有數值欄的檔案會被匯成一批空紀錄
+  if (!head.some(h => h.endsWith("_初算"))) return null;
+  const at = (r, col) => { const i = head.indexOf(col); return i < 0 ? "" : (r[i] ?? ""); };
+  const out = [];
+  for (const r of rows.slice(1)) {
+    if (!r || String(r[0] ?? "").trim() === "") continue;
+    const inp = blankInp(), rov = {};
+    inp.name = String(r[0]).trim();
+    ROWS.forEach(row => {
+      if (row.isName) return;
+      putValue(inp, rov, row.key, at(r, row.key + "_初算"), at(r, row.key + "_調整"));
+    });
+    const lv = calcLeft(inp), rv = calcRight(lv, rov);
+    out.push({ id: Date.now() + out.length, name: inp.name, date: String(r[1] ?? "").trim(),
+      inp, rov, niOv: {}, b5l: lv.B5, b5r: rv.B5, lv, rv });
+  }
+  return out.length ? out : null;
+}
+
 function App() {
-  const [inp, setInp] = useState({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" });
+  const [inp, setInp] = useState(blankInp);
   const [rov, setRov] = useState({});
   const [niOv, setNiOv] = useState({});
-  
+  const fileRef = useRef(null);
+
   const [hist, setHist] = useState(() => {
     try {
       const saved = localStorage.getItem("calcHistory");
@@ -201,7 +290,7 @@ function App() {
   const isNiEdited = (k) => niOv[k] !== undefined;
 
   const loadEx = () => { setInp({ ...EXAMPLE }); setRov({}); setNiOv({}); };
-  const clearAll = () => { setInp({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" }); setRov({}); setNiOv({}); };
+  const clearAll = () => { setInp(blankInp()); setRov({}); setNiOv({}); };
   const resetR = () => { setRov({}); setNiOv({}); };
   const save = () => {
     if (!inp.name.trim()) return alert("請先填寫「案件名稱」才能儲存紀錄");
@@ -302,6 +391,40 @@ function App() {
     downloadCSV(csvContent, `契約變更計算紀錄_${fileStamp()}.csv`);
   };
 
+  // 匯入：自動辨識是「目前計算表」還是「計算紀錄」，兩種匯出的檔案都收
+  const importCSV = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const el = e.target;
+    const reset = () => { el.value = ""; };   // 清空才能重複選同一個檔（失敗時也要清，否則無法重試）
+    const reader = new FileReader();
+    reader.onerror = () => { reset(); alert("檔案讀取失敗，請確認檔案未被其他程式占用"); };
+    reader.onload = () => {
+      reset();
+      const rows = parseCSV(reader.result);
+
+      const list = csvToHistory(rows);
+      if (list) {
+        if (!window.confirm(`偵測到「計算紀錄」檔，共 ${list.length} 筆，要加入儲存紀錄嗎？`)) return;
+        setHist(prev => [...list, ...prev]);
+        alert(`已匯入 ${list.length} 筆紀錄（此格式不含新增項目分攤，載入後請自行確認）`);
+        return;
+      }
+
+      const st = csvToState(rows);
+      if (!st) return alert("無法辨識這個 CSV。請選擇本系統「匯出目前計算表」或「匯出 CSV (Excel)」產生的檔案。");
+      // 右欄手動調整也算資料：左欄空白但右欄填過的情況，覆蓋前一樣要問
+      const hasData = inp.name.trim() !== ""
+        || INPUT_KEYS.some(k => String(inp[k] ?? "").trim() !== "")
+        || Object.keys(rov).length > 0 || Object.keys(niOv).length > 0;
+      if (hasData && !window.confirm("匯入會覆蓋目前畫面上的資料，確定要繼續嗎？")) return;
+      setInp(st.inp); setRov(st.rov); setNiOv(st.niOv);
+      const n = Object.keys(st.rov).length + Object.keys(st.niOv).length;
+      alert(`已匯入「${st.inp.name || "（未命名）"}」${n ? `，含 ${n} 項手動調整` : ""}`);
+    };
+    reader.readAsText(file, "utf-8");
+  };
+
   const isEdited = (k) => rov[k] !== undefined;
   const getDiff = (k) => {
     if (k === "name" || k === "A5pct") return null;
@@ -326,7 +449,7 @@ function App() {
         工程契約變更金額計算器
       </h2>
       <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.2.0（2026-07-20）</span>
+        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.3.0（2026-07-27）</span>
       </p>
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
@@ -341,9 +464,11 @@ function App() {
       <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         <button className="btn" style={{ background: "#2563eb", color: "#fff" }} onClick={loadEx}>載入範例</button>
         <button className="btn" style={{ background: "#6b7280", color: "#fff" }} onClick={clearAll}>清除全部</button>
-        <button className="btn" style={{ background: "#7c3aed", color: "#fff" }} onClick={resetR}>右欄還原</button>
+        <button className="btn" style={{ background: "#7c3aed", color: "#fff" }} onClick={resetR} title="清除主表右欄手動調整，以及新增項目的 012/013/014 分攤填值">還原所有調整</button>
         <button className="btn" style={{ background: "#16a34a", color: "#fff" }} onClick={save}>儲存紀錄</button>
         <button className="btn" style={{ background: "#0891b2", color: "#fff" }} onClick={exportCurrentCSV}>📥 匯出目前計算表 (CSV)</button>
+        <button className="btn" style={{ background: "#ea580c", color: "#fff" }} onClick={() => fileRef.current.click()}>📂 匯入 CSV</button>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={importCSV} />
       </div>
 
       <div style={{ overflowX: "auto" }}>
