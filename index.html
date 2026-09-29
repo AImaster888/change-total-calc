@@ -90,18 +90,36 @@ const ROWS = [
   { key: "A5", label: "A5. 012承商利潤 (金額)", calc: true, validate: "profit" },
   { key: "A6", label: "A6. 013職安衛費用", input: true },
   { key: "A7", label: "A7. 014材料檢試驗費用", input: true },
-  { key: "B2", label: "B2. 變更總金額 (B1+A5+A6+A7)", calc: true },
+  { key: "A8", label: "A8. 015物價指數調整款", input: true },
+  { key: "B2", label: "B2. 變更總金額 (B1+A5+A6+A7+A8)", calc: true },
   { key: "B3", label: "B3. 營業稅 (B2×5%)", calc: true, validate: "tax" },
   { key: "B4", label: "B4. 變更金額 (B2+B3)", calc: true },
   { key: "B5", label: "B5. 最終金額 (A1+B4)", calc: true, final: true },
-  { key: "A8", label: "A8. 其他機關自辦費用", input: true },
+  { key: "C1", label: "C1. 其他機關自辦費用", input: true },
 ];
 
-const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8"];
+const INPUT_KEYS = ["A1","A2","A3","A4a","A4b","A5pct","A6","A7","A8","C1"];
 // 右欄可手動覆寫的欄位（A5pct 只有左欄，故不在此列）
-const OVERRIDE_KEYS = ["A1","A2","A3","A4a","A4b","A6","A7","A8","A5","B3"];
-const blankInp = () => ({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"" });
-const EXAMPLE = { name:"範例工程", A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"10000" };
+const OVERRIDE_KEYS = ["A1","A2","A3","A4a","A4b","A6","A7","A8","C1","A5","B3"];
+const blankInp = () => ({ name:"", A1:"", A2:"", A3:"", A4a:"", A4b:"", A5pct:"", A6:"", A7:"", A8:"", C1:"" });
+const EXAMPLE = { name:"範例工程", A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"0", C1:"10000" };
+
+// v1.4.0 以前 A8 是「其他機關自辦費用」，現改為 C1；A8 改放 015 物調。
+// 舊資料（inp 沒有 C1 鍵）若不搬移，自辦費用會被當成物調算進 B2。
+const LEGACY_LABELS = { "A8. 其他機關自辦費用": "C1" };
+function migrateLegacy(inp, rov) {
+  if (!inp || "C1" in inp) return null;
+  const ni = { ...inp, C1: inp.A8 ?? "", A8: "" };
+  const nr = { ...(rov || {}) };
+  if ("A8" in nr) { nr.C1 = nr.A8; delete nr.A8; }
+  return { inp: ni, rov: nr };
+}
+function migrateRecord(h) {
+  const m = migrateLegacy(h.inp, h.rov);
+  if (!m) return h;
+  const lv = calcLeft(m.inp), rv = calcRight(lv, m.rov);
+  return { ...h, inp: m.inp, rov: m.rov, lv, rv, b5l: lv.B5, b5r: rv.B5 };
+}
 
 function calcLeft(inp) {
   const v = {};
@@ -112,7 +130,7 @@ function calcLeft(inp) {
 
   v.B1 = cut2(v.A2 + v.A3 + v.A4);
   v.A5 = cut2(v.B1 * (v.A5pct / 100));
-  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7);
+  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7 + v.A8);
   v.B3 = cut2(v.B2 * 0.05);
   v.B4 = cut2(v.B2 + v.B3);
   v.B5 = cut2(v.A1 + v.B4);
@@ -131,12 +149,12 @@ function calcRight(lv, ov) {
 
   v.B1 = cut2(v.A2 + v.A3 + v.A4);
   v.A5 = ov.A5 !== undefined ? cut2(p(ov.A5)) : lv.A5;
-  v.A6 = g("A6"); v.A7 = g("A7");
-  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7);
+  v.A6 = g("A6"); v.A7 = g("A7"); v.A8 = g("A8");
+  v.B2 = cut2(v.B1 + v.A5 + v.A6 + v.A7 + v.A8);
   v.B3 = ov.B3 !== undefined ? cut2(p(ov.B3)) : cut2(v.B2 * 0.05);
   v.B4 = cut2(v.B2 + v.B3);
   v.B5 = cut2(v.A1 + v.B4);
-  v.A8 = g("A8");
+  v.C1 = g("C1");
   v.A5pct = lv.A5pct;
   return v;
 }
@@ -211,6 +229,7 @@ function putValue(inp, rov, key, left, right) {
 function csvToState(rows) {
   const byLabel = {};
   ROWS.forEach(r => { if (!r.isName) byLabel[r.label] = r.key; });
+  Object.assign(byLabel, LEGACY_LABELS);
   const inp = blankInp(), rov = {}, niOv = {};
   let hit = 0;
   for (const r of rows) {
@@ -244,7 +263,13 @@ function csvToHistory(rows) {
   if (head[0] !== "案件名稱" || head[1] !== "儲存時間") return null;
   // 只認前兩欄的話，一個光有標頭沒有數值欄的檔案會被匯成一批空紀錄
   if (!head.some(h => h.endsWith("_初算"))) return null;
-  const at = (r, col) => { const i = head.indexOf(col); return i < 0 ? "" : (r[i] ?? ""); };
+  // 舊版紀錄檔沒有 C1 欄，其 A8_* 是自辦費用，須讀進 C1、A8（物調）留空
+  const legacy = !head.includes("C1_初算");
+  const at = (r, col) => {
+    if (legacy && col.startsWith("A8_")) return "";
+    if (legacy && col.startsWith("C1_")) col = "A8_" + col.slice(3);
+    const i = head.indexOf(col); return i < 0 ? "" : (r[i] ?? "");
+  };
   const out = [];
   for (const r of rows.slice(1)) {
     if (!r || String(r[0] ?? "").trim() === "") continue;
@@ -270,7 +295,7 @@ function App() {
   const [hist, setHist] = useState(() => {
     try {
       const saved = localStorage.getItem("calcHistory");
-      if (saved) return JSON.parse(saved);
+      if (saved) return JSON.parse(saved).map(migrateRecord);
     } catch(e) {}
     return [];
   });
@@ -449,11 +474,12 @@ function App() {
         工程契約變更金額計算器
       </h2>
       <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.3.0（2026-07-27）</span>
+        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.4.1（2026-09-29）</span>
       </p>
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
         <b>計算原則：</b>各項計算一律無條件捨去至小數 2 位，不做四捨五入；調整請由 012 承商利潤、0B 營業稅欄位手動修正。<br/>
+        <b>A8 015物調：</b>計入 B2 並一起課 5% 營業稅；不計承商利潤、不做正負方向檢核。C1 其他機關自辦費用非廠商款項，不進計算。<br/>
         <b>驗證規則：</b><br/>
         ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×利潤率、營業稅 ≤ B2×5%（不能多給）<br/>
         ▸ 追減時（B1&lt;0）：僅檢核正負方向，利潤與稅金可多扣、不檢核幅度<br/>
@@ -498,7 +524,7 @@ function App() {
                     {row.isName ? (
                       <input className="name-inp" value={inp.name} onChange={e => setI("name", e.target.value)} placeholder="輸入案件名稱" />
                     ) : row.input ? (
-                      <input className="inp" type="number" step="any" value={inp[k] ?? ""} onChange={e => setI(k, e.target.value)} placeholder={row.pct ? "%" : "0"} />
+                      <NumInput className="inp" value={inp[k] ?? ""} onChange={e => setI(k, e.target.value)} placeholder={row.pct ? "%" : "0"} />
                     ) : (
                       <span>{fmt(lv[k])}</span>
                     )}
@@ -511,7 +537,7 @@ function App() {
                     ) : re ? (
                       <div>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <input className="inp-r" type="number" step="any"
+                          <NumInput className="inp-r"
                             value={getRightDisplayVal(k, row)}
                             onChange={e => setR(k, e.target.value)}
                             placeholder={String(lv[k] || 0)}
@@ -607,7 +633,7 @@ function App() {
                 <td style={{ textAlign: "right" }}>{fmt(newItem.formulaShare012)}</td>
                 <td style={{ textAlign: "right", background: isNiEdited("share012") ? "#faf5ff" : "#fefce8" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <input className="inp-r" type="number" step="any"
+                    <NumInput className="inp-r"
                       value={isNiEdited("share012") ? niOv.share012 : newItem.formulaShare012}
                       onChange={e => setNi("share012", e.target.value)} style={{ fontSize: 12 }} />
                     {isNiEdited("share012") && <span className="edited-badge">已改</span>}
@@ -626,7 +652,7 @@ function App() {
                 <td style={{ textAlign: "right", fontSize: 12, color: "#94a3b8" }}>需另行計算</td>
                 <td style={{ textAlign: "right", color: "#94a3b8" }}>—</td>
                 <td style={{ textAlign: "right", background: "#fff7ed" }}>
-                  <input className="inp-r" type="number" step="any" value={niOv.share013 ?? ""}
+                  <NumInput className="inp-r" value={niOv.share013 ?? ""}
                     onChange={e => setNi("share013", e.target.value)} placeholder="請填入金額"
                     style={{ fontSize: 12, borderColor: "#f97316" }} />
                 </td>
@@ -637,7 +663,7 @@ function App() {
                 <td style={{ textAlign: "right", fontSize: 12, color: "#94a3b8" }}>需另行計算</td>
                 <td style={{ textAlign: "right", color: "#94a3b8" }}>—</td>
                 <td style={{ textAlign: "right", background: "#fff7ed" }}>
-                  <input className="inp-r" type="number" step="any" value={niOv.share014 ?? ""}
+                  <NumInput className="inp-r" value={niOv.share014 ?? ""}
                     onChange={e => setNi("share014", e.target.value)} placeholder="請填入金額"
                     style={{ fontSize: 12, borderColor: "#f97316" }} />
                 </td>
@@ -716,6 +742,23 @@ function App() {
       )}
     </div>
   );
+}
+
+// 數字輸入框加千分位：離開欄位時顯示逗號，點進去編輯時顯示原值；
+// 回傳給 state 的值一律去掉逗號，計算與 CSV 仍用原始數字。
+// （放在 App 之後：test-calc.js 只取 App 之前的純 JS 來跑，這裡有 JSX）
+const withCommas = (s) => {
+  const str = String(s ?? "");
+  const m = str.match(/^(-?)(\d+)(\.\d*)?$/);
+  return m ? m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (m[3] || "") : str;
+};
+function NumInput({ value, onChange, placeholder, ...rest }) {
+  const [focus, setFocus] = useState(false);
+  return <input {...rest} type="text" inputMode="decimal"
+    value={focus ? value : withCommas(value)}
+    placeholder={placeholder === undefined ? undefined : withCommas(placeholder)}
+    onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+    onChange={e => onChange({ target: { value: e.target.value.replace(/,/g, "") } })} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

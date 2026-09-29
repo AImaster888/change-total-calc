@@ -5,8 +5,8 @@ const src = html.slice(html.indexOf('<script type="text/babel">') + 26, html.ind
 const body = src
   .replace(/const \{ useState[^\n]*\n/, "")
   .replace(/^const EXAMPLE[^\n]*$/m, "");
-const mod = new Function(body + "\nreturn { p, cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, parseCSV, csvToState, csvToHistory };")();
-const { cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, p, parseCSV, csvToState, csvToHistory } = mod;
+const mod = new Function(body + "\nreturn { p, cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, parseCSV, csvToState, csvToHistory, migrateRecord };")();
+const { cut2, calcLeft, calcRight, calcNewItemTax, getWarnings, p, parseCSV, csvToState, csvToHistory, migrateRecord } = mod;
 
 let pass = 0, fail = 0;
 const t = (name, actual, expect) => {
@@ -39,7 +39,7 @@ console.log("\n=== 邊界：700.07/2100.21 應為 75.00 ===");
 
 console.log("\n=== 各項一律無條件捨去 2 位（不做四捨五入）===");
 {
-  const lv = calcLeft({ A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"10000" });
+  const lv = calcLeft({ A1:"25000000", A2:"1350000.55", A3:"-820000.35", A4a:"650000.8", A4b:"0", A5pct:"10", A6:"11800.1", A7:"23600.2", A8:"0", C1:"10000" });
   t("B1", lv.B1, 1180001);
   t("A5 = B1×10% 捨去2位", lv.A5, 118000.1);
   t("B2（修前 1333401.4000000001）", lv.B2, 1333401.4);
@@ -222,6 +222,55 @@ console.log("\n=== CSV 匯入：「匯出計算紀錄」寬表還原 ===");
   t("僅 A5/B3 視為手動調整", Object.keys(list[0].rov).sort().join(","), "A5,B3");
   t("初算 B5 重算一致", list[0].b5l, 1115500);
   t("調整 B5 重算一致", list[0].b5r, 1115498);
+}
+
+console.log("\n=== v1.4.0 A8 015物調計入 B2（第一二雙溪第四次變更實際數字）===");
+{
+  const lv = calcLeft({ A1:"1479781635", A2:"10424048.06", A3:"-17290683.22", A4a:"0", A4b:"0", A5pct:"10",
+    A6:"1272320", A7:"1352392.94", A8:"-7069407", C1:"" });
+  t("B1", lv.B1, -6866635.16);
+  t("A5 物調不計利潤", lv.A5, -686663.51);
+  t("B2 含物調", lv.B2, -11997992.73);
+  t("B3 物調一起課稅", lv.B3, -599899.63);
+  t("B5", lv.B5, 1467183742.64);
+  const rv = calcRight(lv, { A5:"-686663.79", B3:"-599902" });
+  t("調整 B2", rv.B2, -11997993.01);
+  t("調整 B5", rv.B5, 1467183739.99);
+  const w = getWarnings(rv);
+  t("物調不做正負方向檢核", w.A8, undefined);
+  const lv2 = calcLeft({ A1:"0", A2:"100", A3:"0", A4a:"0", A4b:"0", A5pct:"10", A6:"0", A7:"0", A8:"0", C1:"99999" });
+  t("C1 自辦費用不進 B2", lv2.B2, 110);
+}
+
+console.log("\n=== v1.4.0 舊資料：A8 自辦費用須搬到 C1，不得被當成物調 ===");
+{
+  const st = csvToState(parseCSV([
+    '"A1. 原契約金額","1000","1000","",""',
+    '"A2. 原契約工項追加金額","100","100","",""',
+    '"A3. 原契約工項減少金額","0","0","",""',
+    '"A8. 其他機關自辦費用","500","600","",""',
+  ].join("\n")));
+  t("舊計算表 A8 標籤 → C1", st.inp.C1, "500");
+  t("舊計算表 A8（物調）留空", st.inp.A8, "");
+  t("舊計算表調整值 → C1", st.rov.C1, "600");
+  t("舊計算表重算 B2 不含自辦費用", calcLeft(st.inp).B2, 100);
+
+  const oldHist = csvToHistory(parseCSV(
+    '"案件名稱","儲存時間","A1_初算","A1_調整","A8_初算","A8_調整"\n"甲案","2026/7/27","1000","1000","500","500"'));
+  t("舊紀錄檔 A8 → C1", oldHist[0].inp.C1, "500");
+  t("舊紀錄檔 A8（物調）留空", oldHist[0].inp.A8, "");
+  const newHist = csvToHistory(parseCSV(
+    '"案件名稱","儲存時間","A1_初算","A1_調整","A8_初算","A8_調整","C1_初算","C1_調整"\n"乙案","2026/9/29","1000","1000","-70","-70","500","500"'));
+  t("新紀錄檔 A8 物調", newHist[0].inp.A8, "-70");
+  t("新紀錄檔 C1", newHist[0].inp.C1, "500");
+
+  const rec = migrateRecord({ id: 1, name: "舊", inp: { name:"舊", A1:"1000", A2:"100", A5pct:"0", A8:"500" }, rov: { A8:"600" }, b5l: 0, b5r: 0 });
+  t("localStorage 舊紀錄 A8 → C1", rec.inp.C1, "500");
+  t("localStorage 舊紀錄 A8 清空", rec.inp.A8, "");
+  t("localStorage 舊紀錄調整值 → C1", rec.rov.C1, "600");
+  t("localStorage 舊紀錄 B5 重算不含自辦費用", rec.b5l, 1105);
+  const cur = { id: 2, inp: { A8:"-70", C1:"500" }, rov: {} };
+  t("新紀錄不重複搬移", migrateRecord(cur), cur);
 }
 
 console.log(`\n合計：${pass} 通過 / ${fail} 失敗`);
