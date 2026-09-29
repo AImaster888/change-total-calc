@@ -474,7 +474,7 @@ function App() {
         工程契約變更金額計算器
       </h2>
       <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.4.2（2026-09-29）</span>
+        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.4.3（2026-09-29）</span>
       </p>
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
@@ -757,7 +757,10 @@ function NumInput({ value, onChange, placeholder, ...rest }) {
   return <input {...rest} type="text" inputMode="decimal"
     value={focus ? value : withCommas(value)}
     placeholder={placeholder === undefined ? undefined : withCommas(placeholder)}
-    onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+    // 進入欄位時顯示值會從 1,000 變成 1000，重畫會吃掉瀏覽器的全選，
+    // Tab 進來打字就接在原值後面——重畫後再全選一次
+    onFocus={e => { const t = e.target; setFocus(true); setTimeout(() => t.select(), 0); }}
+    onBlur={() => setFocus(false)}
     onChange={e => onChange({ target: { value: e.target.value.replace(/,/g, "") } })} />;
 }
 
