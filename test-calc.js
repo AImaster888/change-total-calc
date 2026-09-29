@@ -273,5 +273,17 @@ console.log("\n=== v1.4.0 舊資料：A8 自辦費用須搬到 C1，不得被當
   t("新紀錄不重複搬移", migrateRecord(cur), cur);
 }
 
+console.log("\n=== v1.4.2 013/014 可與 B1 反向，不再警告；012 仍檢核 ===");
+{
+  // 第一二雙溪第四次變更：包工費追減，013/014 因工期展延追加
+  const lv = calcLeft({ A1:"1479781635", A2:"10424048.06", A3:"-17290683.22", A4a:"0", A4b:"0", A5pct:"10",
+    A6:"1272320", A7:"1352392.94", A8:"-7069407", C1:"" });
+  const w = getWarnings(lv);
+  t("追減時 013 為正不警告", w.A6, undefined);
+  t("追減時 014 為正不警告", w.A7, undefined);
+  const w2 = getWarnings(calcRight(lv, { A5:"100" }));
+  t("追減時 012 為正仍警告", w2.A5 !== undefined, true);
+}
+
 console.log(`\n合計：${pass} 通過 / ${fail} 失敗`);
 process.exit(fail ? 1 : 0);

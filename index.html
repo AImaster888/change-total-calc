@@ -175,11 +175,11 @@ function getWarnings(rv) {
     w.B3 = `追加時稅金超過上限 ${fmt(taxLimit)}`;
   }
 
+  // 只檢 012：利潤由 B1 算出，正負必與 B1 一致。013/014 不檢——實務上可能包工費追減、
+  // 013/014 卻因工期展延而追加（例：第一二雙溪第四次變更），綁 B1 正負會誤報。
   if (Math.abs(rv.B1) > tol) {
     const signItems = [
       { key: "A5", label: "012承商利潤" },
-      { key: "A6", label: "013職安衛" },
-      { key: "A7", label: "014材料檢試驗" },
     ];
     for (const item of signItems) {
       const val = rv[item.key];
@@ -474,7 +474,7 @@ function App() {
         工程契約變更金額計算器
       </h2>
       <p style={{ textAlign: "center", margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.4.1（2026-09-29）</span>
+        契約追加減金額彙算與驗證　<span style={{ fontSize: 11 }}>v1.4.2（2026-09-29）</span>
       </p>
 
       <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 12, lineHeight: 1.8, color: "#92400e" }}>
@@ -483,7 +483,7 @@ function App() {
         <b>驗證規則：</b><br/>
         ▸ 追加時（B1&gt;0）：012承商利潤 ≤ B1×利潤率、營業稅 ≤ B2×5%（不能多給）<br/>
         ▸ 追減時（B1&lt;0）：僅檢核正負方向，利潤與稅金可多扣、不檢核幅度<br/>
-        ▸ 012/013/014 正負方向應與 B1 一致（追加應為正、追減應為負）<br/>
+        ▸ 012 正負方向應與 B1 一致（追加應為正、追減應為負）；013/014 可與 B1 反向，不檢核<br/>
         ▸ 右欄「調整欄」可手動修改數值，系統即時重算並驗證
       </div>
 
